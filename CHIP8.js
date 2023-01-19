@@ -2,7 +2,7 @@
 function Setup(){
   var canvas = document.getElementById('myCanvas');
   var context = canvas.getContext('2d');
-  CHIP8();
+  CHIP8(canvas, context);
 }
 
 class Display{ 
@@ -152,21 +152,15 @@ class CPU{
       this.memory[i] = this.SPRITES[i];
     }
   }
-
-  //Loads program into the memory starting from the memory location 0x200 (512)
-  loadProgram(program){
-    for(let i=0; i < program.length; i++){
-      this.memory[0x200 + i] = program[i];
-    }
-  } 
-
+  
   //Gets ROM from files and calls loadProgram() to store it into the memory (0x200)
   loadROM(romName){
     var request = new XMLHttpRequest;
+    var self = this;
     request.onload = function(){
       if (request.response){
         let program = new Uint8Array(request.response);
-        this.loadProgram(program); //may have to change if error
+        self.loadProgram(program);
       }
     }
     //gets ROM from roms file
@@ -175,6 +169,13 @@ class CPU{
     //send request to load.
     request.send();
   }
+
+  //Loads program into the memory starting from the memory location 0x200 (512)
+  loadProgram(program){
+    for(let i=0; i < program.length; i++){
+      this.memory[0x200 + i] = program[i];
+    }
+  } 
 
   //updates the given timers. Delay timer keeps track of where certain events occur
   updateTimers(){
@@ -245,73 +246,198 @@ class CPU{
       //compares the value stored in the x register to 0x3(nn) and incements the pc by two if
       //they are different
       case 0x4000:
-        
+        if(this.registers[x] !== (opcode & 0xFF)){
+          this.pc += 2;
+        }
         break;
+
+      //compares values stored in the x register to the y register and increments the pc by two if
+      //they are the same
       case 0x5000:
+        if (this.v[x] === this.v[y]) {
+          this.pc += 2;
+        }
         break;
+
+      //Sets the value of the x register to be the two least significant bits of the opcode
       case 0x6000:
+        this.registers[x] = (opcode & 0xFF);
         break;
+
+      //adds the two least significant bits of opcode to the value stored in register x
       case 0x7000:
+      this.registers[x] += (opcode & 0xFF);
         break;
+      //8XY0
       case 0x8000:
         switch (opcode & 0xF) {
+          //x register assigned to value in y register
           case 0x0:
+            this.registers[x] = this.registers[y];
             break;
+          //x register value OR y register and stored back into x register
           case 0x1:
+            this.registers[x] |= this.registers[y];
             break;
+          //x register value AND y register and stored back into x register
           case 0x2:
+            this.registers[x] &= this.registers[y];
             break;
+          //x register value XOR y register and stored back into x register
           case 0x3:
+            this.registers[x] ^= this.registers[y];
             break;
+          //Add register x to register y and store resulting 8 bits back into register x
           case 0x4:
+            let sum = (this.registers[x] += this.registers[y]);
+            this.registers[0xF] = 0;
+            if(sum > 0xFF){
+              this.registers[0xF] = 1;
+            }
+
+            this.registers[x] = sum;
             break;
+          //Subtract register y from register x and handles underflow
           case 0x5:
+            this.registers[0xF] = 0;
+
+            if(this.registers[x] > this.registers[y]){
+              this.registers[0xF] = 1;
+            }
+
+            this.registers[x] -= this.registers[y];
             break;
+          //set register F to be the least significant bit in register x and remove the bit in register x
           case 0x6:
+            this.registers[0xF] = (this.registers[x] & 0x1);
+            this.registers[x] >>= 1;
             break;
+          //Subtracts register x from register y (stores value back into x) and changes the value in register F depending on if register x or y is bigger
           case 0x7:
+          this.registers[0xF] = 0;
+
+          if(this.registers[y] > this.registers[x]){
+            this.registers[0xF] = 1;
+          }
+
+          this.registers[x] = this.register[y] - this.register[x]; 
             break;
+          //Change register F if condition is met and bitshift register x by 1
           case 0xE:
+            this.registers[0xF] = (this.registers[x] & 0x80);
+            this.registers[x] <<= 1;
             break;
         }
         break;
+
+      //increment pc by two if register x != register y
       case 0x9000:
+      if(this.registers[x] !== this.registers[y]){
+        this.pc += 2;
+      }
         break;
+      
+      //set the index register the the three lsb of the opcode
       case 0xA000:
+        this.index = (opcode & 0xFFF);
         break;
+      
+      //Set the pc to the 3 lsb of the opcode + value of register 0
       case 0xB000:
+        this.pc = (opcode & 0xFFF) + this.registers[0];
         break;
+
+      //generate a random number between 0-255 AND with the two lsb of the opcode and store in register x
       case 0xC000:
+        let num = Math.floor(Math.random() * 0xFF); //TODO: 0xFF = 255 but im not sure if it will mess up  
+        this.registers[x] = num & (opcode & 0xFF);
         break;
+      
+      //Draws/erases pixels on the screen
       case 0xD000:
+        let width = 8;
+        let height = (opcode & 0xF);
+        this.registers[0xF] = 0;
+
+        for(let i = 0; i < height; i++){
+          let sprite = this.memory[this.index + row];
+
+          for(let j = 0; j < width; j++){
+            //if sprite is not 0, render/erase the pixel
+            if((sprite & 0x80) > 0){
+              //If setPixel returns 1 (pixel erased), set register F to 1
+              if(this.display.setPixel(this.registers[x] + j, this.registers[y] + i)){
+                this.registers[0xF] = 1;
+              }
+            }
+
+            //shift sprite bit left by 1 to move to next sprite in memory
+            sprite <<= 1;
+          }
+        }
         break;
       case 0xE000:
         switch (opcode & 0xFF) {
+          //if the key stored in register x is pressed then skip the next instruction
           case 0x9E:
+            if(this.keyboard.isKeyPressed(this.registers[x])){
+              this.pc += 2;
+            }
             break;
+          //if the key stored in register x is NOT pressed then skip the next instruction
           case 0xA1:
+            if(!this.keyboard.isKeyPressed(this.registers[x])){
+              this.pc += 2;
+            }
             break;
         }
         break;
       case 0xF000:
         switch (opcode & 0xFF) {
+          //set register x to the value stored in the delay timer
           case 0x07:
+            this.registers[x] = this.delayTimer;
             break;
+          //pause the emulator until a key is pressed
           case 0x0A:
+            this.drawFlag = true;
+            this.keyboard.onNextKeyPress = function(key){
+              this.register[x] = key;
+              this.drawFlag = false;
+            }.bind(this);
             break;
+          //set the delay timer to the value stored in register x
           case 0x15:
+            this.delayTimer = this.v[x];
             break;
           case 0x18:
+            //not working with sound so nothing
             break;
+            //add the value of register x to the index
           case 0x1E:
+            this.index += this.registers[x];
             break;
+          //set the index to the value in register x * 5
           case 0x29:
+            this.index = this.registers[x] * 5;
             break;
+          //stores hundreds, tens, and ones digits of register x and store them in index to index+2
           case 0x33:
+            this.memory[this.index] = parseInt(this.registers[x] / 100);
+            this.memory[this.index + 1] = parseInt((this.registers[x] % 100) / 10);
+            this.memory[this.index + 2] = parseInt(this.registers[x] % 10);
             break;
+          //loop through registers 0 to x and store its value in memory starting at the index value
           case 0x55:
+            for(let i = 0; i <= x; i++){
+              this.memory[this.index + i] = this.registers[i];
+            }
             break;
+          //loops through memory staring at the index and stores it into registers 0 to x
           case 0x65:
+            for(let i =0; i < x; i++){
+              this.registers[i] = this.memory[this.index + i];
+            }
             break;
         }
         break;
@@ -322,8 +448,33 @@ class CPU{
   } 
 }
 
-function CHIP8(){
-  
+function CHIP8(canvas, context){
+  const display = new Display(canvas, context);
+  const keyboard = new Keyboard();
+  const cpu = new CPU(display, keyboard);
+
+  let loop, fpsInterval, startTime, now, then, elapsed;
+  function init(){
+    fpsInterval = 1000 / 60;
+    then = Date.now();
+    startTime = then;
+
+    cpu.loadSprites();
+    cpu.loadROM('BLITZ');
+    loop = requestAnimationFrame(step);
+  }
+
+  function step(){
+    now = Date.now;
+    elapsed = now - then;
+
+    if(elapsed > fpsInterval){
+      cpu.cycle();
+    }
+    loop = requestAnimationFrame(step);
+  }
+
+  init();
 }
 
 window.onload = Setup;
