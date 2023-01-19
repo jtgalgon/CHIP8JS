@@ -2,7 +2,7 @@
 function Setup(){
   var canvas = document.getElementById('myCanvas');
   var context = canvas.getContext('2d');
-  const chip8 = new CHIP8(canvas, context);
+  CHIP8();
 }
 
 class Display{ 
@@ -30,19 +30,22 @@ class Display{
     }else if (x < 0){
       y += this.rows;
     }
+
     //calculate pixel in screen and XOR in array
     let pixelLocation = x + (y * this.cols);
     this.screen[pixelLocation] ^= 1;
     return !this.screen[pixelLocation];
   }
 
-  //clears display
+  //clears the display array to re-calculate the next pixels that need to be drawn
+  //when the frame is called.
   clear(){
     this.screen = new Array(this.cols * this.rows)
   }
 
+  //called to render all the pixels on the display
   render(){
-    //clear screen to be redrawn
+    //clear the entire screen
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     //loop through screen array and fill black rectangles depending on 
@@ -88,38 +91,78 @@ class Keyboard{
   isKeyPressed(keyCode){
     return this.keyPressed[keyCode];
   }
-
+  
+  //sets the given event key down.
   onKeyDown(event){
-  }
+    let key = this.KEYMAP[event.which];
+    this.keysPressed[key] = tru
+    // Make sure onNextKeyPress is initialized and the pressed key is actually mapped to a Chip-8 key
+    if (this.onNextKeyPress !== null && key) {
+      this.onNextKeyPress(parseInt(key));
+      this.onNextKeyPress = null;
+    }
 }
 
-class CHIP8{
-  constructor(canvas, context){
-    //initialize all values
+  //sets the given event key up.
+  onKeyUp(event) {
+    let key = this.KEYMAP[event.which];
+    this.keysPressed[key] = false;
+}
+}
+
+class CPU{
+  //initializes the CPU with a given display and keyboard
+  constructor(display, keyboard){
+    this.display = display;
+    this.keyboard = keyboard;
+
+    //initializes all the other required variables stated in the techincal reference
     this.pc = 0x200;
-    this.opcode = 0;
-    this.index = 0;
-    this.sp = 0;
     this.memory = new Uint8Array(4096);
-    this.register = new Uint8Array(16);
-    this.stack = new Uint16Array(16);
-    this.drawFlag = false;
+    this.registers = new Uint8Array(16);
+    this.stack = new Uint16Array();
+    this.index = 0;
     this.delayTimer = 0;
-    this.soundTimer = 0;
-    this.display = new Display(canvas, context);
-    //TODO: Load font into memory
+    this.speed = 10;
+    this.drawFlag = false;
+    this.SPRITES = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    ];
   }
 
-  //TODO: Loads program into the memory starting from the memory location 0x200 (512)
+  //from technical reference, take the hex for each sprite value and load it into the beginning of
+  //the memory
+  loadSprites(){
+    for (let i = 0; i < this.SPRITES.length; i++){
+      this.memory[i] = this.SPRITES[i];
+    }
+  }
+
+  //Loads program into the memory starting from the memory location 0x200 (512)
   loadProgram(program){
-    for(let i =0; i < program.length; i++){
+    for(let i=0; i < program.length; i++){
       this.memory[0x200 + i] = program[i];
     }
   } 
 
+  //Gets ROM from files and calls loadProgram() to store it into the memory (0x200)
   loadROM(romName){
     var request = new XMLHttpRequest;
-
     request.onload = function(){
       if (request.response){
         let program = new Uint8Array(request.response);
@@ -132,17 +175,155 @@ class CHIP8{
     //send request to load.
     request.send();
   }
+
+  //updates the given timers. Delay timer keeps track of where certain events occur
+  updateTimers(){
+    if (this.delayTimer > 0) {
+      this.delayTimer -= 1;
+    }
+  }
+
+  //cpu cycle of fetching, decoding, and executing the given opcode
+  //called in the step function inside CHIP8 (step is called 60 times/sec)
+  cycle(){
+    for(let i =0; i < this.speed; i++){
+      if(!this.drawFlag){
+        let opcode = (this.memory[this.pc] << 8 | this.memory[this.pc + 1]);
+        this.executeInstruction(opcode);
+      }
+    }
+
+    if(!this.drawFlag){
+      this.updateTimers();
+    }
+
+    this.display.render();
+  }
   
+  executeInstruction(opcode){
+    this.pc += 2;
+    let x = (opcode & 0x0F00) >> 8;
+    let y = (opcode & 0x00F0) >> 4;
+  
+    switch (opcode & 0xF000) {
 
-  //TODO: update opcode
-  fetchOpcode(){
+      //SYS addr
+      case 0x0000:
+        switch (opcode) {
 
-  }
+          //clears display
+          case 0x00E0:
+            this.display.clear();
+            break;
 
-  //decodeOpcode
-  decodeOpcode(){
+            //pop last element of stack from array and store in pc
+          case 0x00EE:
+            this.pc = this.stack.pop();
+            break;
+        }
+        break;
 
-  }
+      //set pc to value stored in 0x1(nnn)
+      case 0x1000:
+        this.pc = (opcode & 0xFFF);
+        break;
+
+      //push pc to stack and set pc to value stores in 0x1(nnn)
+      case 0x2000:
+        this.stack.push(this.pc);
+        this.pc = (opcode & 0xFFF)
+        break;
+
+      //compares the value stored in the x register to 0x3(nn) and incements the pc by two if
+      //they are the same
+      case 0x3000:
+        if(this.registers[x] === (opcode & 0xFF)){
+          this.pc += 2;
+        }
+        break;
+
+      //compares the value stored in the x register to 0x3(nn) and incements the pc by two if
+      //they are different
+      case 0x4000:
+        
+        break;
+      case 0x5000:
+        break;
+      case 0x6000:
+        break;
+      case 0x7000:
+        break;
+      case 0x8000:
+        switch (opcode & 0xF) {
+          case 0x0:
+            break;
+          case 0x1:
+            break;
+          case 0x2:
+            break;
+          case 0x3:
+            break;
+          case 0x4:
+            break;
+          case 0x5:
+            break;
+          case 0x6:
+            break;
+          case 0x7:
+            break;
+          case 0xE:
+            break;
+        }
+        break;
+      case 0x9000:
+        break;
+      case 0xA000:
+        break;
+      case 0xB000:
+        break;
+      case 0xC000:
+        break;
+      case 0xD000:
+        break;
+      case 0xE000:
+        switch (opcode & 0xFF) {
+          case 0x9E:
+            break;
+          case 0xA1:
+            break;
+        }
+        break;
+      case 0xF000:
+        switch (opcode & 0xFF) {
+          case 0x07:
+            break;
+          case 0x0A:
+            break;
+          case 0x15:
+            break;
+          case 0x18:
+            break;
+          case 0x1E:
+            break;
+          case 0x29:
+            break;
+          case 0x33:
+            break;
+          case 0x55:
+            break;
+          case 0x65:
+            break;
+        }
+        break;
+
+    default:
+      throw new Error('Unknown opcode ' + opcode);
+    }
+  } 
+}
+
+function CHIP8(){
+  
 }
 
 window.onload = Setup;
