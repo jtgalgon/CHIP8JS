@@ -120,7 +120,7 @@ class CPU{
     this.pc = 0x200;
     this.memory = new Uint8Array(4096);
     this.registers = new Uint8Array(16);
-    this.stack = new Uint16Array();
+    this.stack = new Array();
     this.index = 0;
     this.delayTimer = 0;
     this.speed = 10;
@@ -152,7 +152,7 @@ class CPU{
       this.memory[i] = this.SPRITES[i];
     }
   }
-  
+
   //Gets ROM from files and calls loadProgram() to store it into the memory (0x200)
   loadROM(romName){
     var request = new XMLHttpRequest;
@@ -254,7 +254,7 @@ class CPU{
       //compares values stored in the x register to the y register and increments the pc by two if
       //they are the same
       case 0x5000:
-        if (this.v[x] === this.v[y]) {
+        if (this.registers[x] === this.registers[y]) {
           this.pc += 2;
         }
         break;
@@ -360,7 +360,7 @@ class CPU{
         this.registers[0xF] = 0;
 
         for(let i = 0; i < height; i++){
-          let sprite = this.memory[this.index + row];
+          let sprite = this.memory[this.index + i];
 
           for(let j = 0; j < width; j++){
             //if sprite is not 0, render/erase the pixel
@@ -453,21 +453,18 @@ function CHIP8(canvas, context){
   const keyboard = new Keyboard();
   const cpu = new CPU(display, keyboard);
 
-  let loop, fpsInterval, startTime, now, then, elapsed;
   function init(){
     fpsInterval = 1000 / 60;
     then = Date.now();
     startTime = then;
-
     cpu.loadSprites();
-    cpu.loadROM('BLITZ');
+    cpu.loadROM('test_opcode.ch8');
     loop = requestAnimationFrame(step);
   }
 
   function step(){
-    now = Date.now;
+    let now = Date.now();
     elapsed = now - then;
-
     if(elapsed > fpsInterval){
       cpu.cycle();
     }
