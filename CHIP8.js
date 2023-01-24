@@ -63,7 +63,7 @@ class Display{
 
 class Keyboard{
   constructor(){
-    this.keypressed = [];
+    this.keyPressed = [];
     this.onNextKeyPress = null;
     this.KEYMAP = {
       49: 0x1, // 1
@@ -95,7 +95,7 @@ class Keyboard{
   //sets the given event key down.
   onKeyDown(event){
     let key = this.KEYMAP[event.which];
-    this.keysPressed[key] = tru
+    this.keyPressed[key] = true;
     // Make sure onNextKeyPress is initialized and the pressed key is actually mapped to a Chip-8 key
     if (this.onNextKeyPress !== null && key) {
       this.onNextKeyPress(parseInt(key));
@@ -106,7 +106,7 @@ class Keyboard{
   //sets the given event key up.
   onKeyUp(event) {
     let key = this.KEYMAP[event.which];
-    this.keysPressed[key] = false;
+    this.keyPressed[key] = false;
 }
 }
 
@@ -320,7 +320,7 @@ class CPU{
             this.registers[0xF] = 1;
           }
 
-          this.registers[x] = this.register[y] - this.register[x]; 
+          this.registers[x] = this.registers[y] - this.registers[x]; 
             break;
           //Change register F if condition is met and bitshift register x by 1
           case 0xE:
@@ -408,7 +408,7 @@ class CPU{
             break;
           //set the delay timer to the value stored in register x
           case 0x15:
-            this.delayTimer = this.v[x];
+            this.delayTimer = this.registers[x];
             break;
           case 0x18:
             //not working with sound so nothing
@@ -458,7 +458,7 @@ function CHIP8(canvas, context){
     then = Date.now();
     startTime = then;
     cpu.loadSprites();
-    cpu.loadROM('test_opcode.ch8');
+    cpu.loadROM('horseyJump.ch8');
     loop = requestAnimationFrame(step);
   }
 
